@@ -1,0 +1,136 @@
+//colour passed by ref
+proc GetColour(float $colour[]){
+// create a colour editor dialog box
+colorEditor;
+// query the result
+if (`colorEditor -query -result`) {
+$colour = `colorEditor -query -rgb`;
+} else {
+    print("No colour selected, using default/previous.\n");
+}
+return;
+}
+
+proc GenerateTerrain(int $iterations, float $initialScale, float $scaleFactor, float $width, float $height, int $waterLevel, float $seaLevelHeight, int $addTexture, float $groundCol[],float $mountainCol[],float $waterCol[],float $mountainThreshold, float $waterOpacity ,float $waveDepth, float $waveFrequency){
+    //add sea
+    if ($waterLevel){
+        string $waterGeo[] =  `polyPlane -n newWaterLevel -w $width -h $height -sx 10 -sy 10 -ax 0 1 0 -cuv 2 -ch 1`;
+        move -r 0 $seaLevelHeight 0;
+        //make new material
+        string $waterMaterial = `shadingNode -asShader aiStandardSurface`;
+        setAttr ($waterMaterial + ".transmission") $waterOpacity;
+        string $waterTexture = `shadingNode -asTexture water`;
+        setAttr ($waterTexture + ".colorGain") $waterCol[0] $waterCol[1] $waterCol[2];
+        setAttr ($waterTexture + ".waveFrequency") $waveFrequency;
+        setAttr ($waterTexture + ".waveAmplitude") $waveDepth;
+        connectAttr -f ($waterTexture + ".outColor") ($waterMaterial + ".baseColor");
+        //bump map for waves
+        $bmp=`createRenderNodeCB -asUtility "" bump2d ""`;
+        $place2d=`shadingNode -asUtility place2dTexture`;
+        connectAttr ($place2d + ".outUV") ($waterTexture + ".uv");
+        connectAttr ($place2d + ".outUvFilterSize") ($waterTexture + ".uvFilterSize");
+        setAttr ($bmp + ".bumpDepth") $waveDepth;
+        connectAttr -f ($waterTexture + ".outAlpha") ($bmp + ".bumpValue");
+        connectAttr -f ($bmp + ".outNormal") ($waterMaterial + ".normalCamera");
+        select -r $waterGeo[0];
+        //assign texture
+        if ($addTexture)
+        {
+            hyperShade -assign $waterMaterial;
+        }
+    }
+    //create base ground plane
+    polyPlane -n newTerrain -w $width -h $height -sx 10 -sy 10 -ax 0 1 0 -cuv 2 -ch 1;
+    //prevent conflicting names from crashing
+    string $names[] =`ls -sl`;
+    //dimond sqaure algorithm style approach
+    for($i=0;$i<$iterations;$i++){
+      //  Loop through all the vertices of the mesh and move each one up/down by a random amount in the range [-displacement,displacement]
+      int $vertexInfo[] = polyEvaluate();
+      $vertexCount = $vertexInfo[0];
+      for($j=0;$j<($vertexCount);$j++){
+        $scaleY = rand(-$initialScale, $initialScale);
+        move -r 0 $scaleY 0 ($names[0]+".vtx["+$j+"]");
+      }
+      //  Subdivide the mesh using the polySmooth command
+      polySmooth -dv 1 $names[0];
+      // Decrease the displacement range d by a factor of s
+      $initialScale = $initialScale / $scaleFactor;
+    };
+    //texture
+    string $groundMaterial = `shadingNode -asShader aiStandardSurface`;
+    string $groundTexture = `shadingNode -asTexture snow`;
+    setAttr ($groundTexture  + ".snowColor") $mountainCol[0] $mountainCol[1] $mountainCol[2];
+    setAttr ($groundTexture  + ".surfaceColor") $groundCol[0] $groundCol[1] $groundCol[2];
+    setAttr ($groundTexture + ".threshold") $mountainThreshold;
+    connectAttr -f ($groundTexture + ".outColor") ($groundMaterial + ".baseColor");
+    select -r $names[0];
+    if ($addTexture)
+    {
+        hyperShade -assign $groundMaterial;
+    }
+};
+
+//delete repeat windows
+if(`window -ex "genetatorWindow"`)
+ {
+  deleteUI -window "genetatorWindow";
+ }
+
+///////////////////////////////UI WINDOW//////////////////
+window -t "Terrain Generator" -wh 400 300 "genetatorWindow";
+columnLayout;
+text -w 175 -al "center" -l "Terrain Parameters";
+separator -st "double" -w 200;
+text -label "Iterations";
+intField -minValue 1 -maxValue 5 -value 1 "iterations";
+text -label "Maximum Displacement";
+floatField  -w 200 -min 0 "initial_scale";
+text -label "Scale Factor";
+floatField  -w 200 -min 1 "scale_factor";
+text -label "X Size";
+floatField -min 0 -w 200 "width";
+text -label "Z Size";
+floatField -min 0  -w 200 "height";
+int $waterLevel = 0;
+text -label "Add Sea";
+checkBox -label " "
+          -onCommand "$waterLevel = 1"
+          -offCommand "$waterLevel = 0"
+     waterCheckBox;
+int $addTexture = 0;
+text -label "Sea Height";
+floatField -w 200 "seaLevelHeight";
+//texture params
+text -w 175 -al "center" -l "Texture Parameters";
+separator -st "double" -w 200;
+text -label "Add Arnold Textures";
+checkBox -label " "
+          -onCommand "$addTexture = 1"
+          -offCommand "$addTexture = 0"
+textureCheckBox;
+text -label "Mountain/Canyon Threshold";
+floatField   -w 200 "mountainThreshold";
+text -label "Sea Opacity";
+floatField   -w 200 "waterOpacity";
+text -label "Wave Amplitude";
+floatField   -w 200 "waveDepth";
+text -label "Wave Frequency";
+floatField   -w 200 "waveFrequency";
+//default colours
+float $waterCol[] = {0.0,1.0,1.0};
+float $groundCol[] = {0.0, 0.4, 0.0};
+float $mountainCol[] = {0.122, 0.122, 0.122};
+//generate terrain
+$generateClick =
+"float $waveFrequency = `floatField -query -value waveFrequency`; float $waveDepth = `floatField -query -value waveDepth`; float $mountainThreshold = `floatField -query -value mountainThreshold`; float $waterOpacity = `floatField -query -value waterOpacity`; int $iterations = `intField -query -value iterations`;float $initial_scale = `floatField -query -value initial_scale`; float $scale_factor = `floatField -query -value scale_factor`; float $width = `floatField -query -value width`; float $height = `floatField -query -value height`;float $seaLevelHeight = `floatField -query -value seaLevelHeight`; GenerateTerrain $iterations $initial_scale $scale_factor $width $height $waterLevel $seaLevelHeight $addTexture $groundCol $mountainCol $waterCol $mountainThreshold $waterOpacity $waveDepth $waveFrequency";
+//get colours
+$groundClick = "GetColour $groundCol";
+$mountainClick = "GetColour $mountainCol";
+$waterClick = "GetColour $waterCol";
+button -l "Sea Colour" -w 200 -c {$waterClick};
+button -l "Mountain/Canyon Colour" -w 200 -c {$mountainClick};
+button -l "Base Ground Colour" -w 200 -c {$groundClick};
+separator -st "double" -w 200;
+button -l "GENERATE" -w 200 -c {$generateClick};
+showWindow "genetatorWindow";
